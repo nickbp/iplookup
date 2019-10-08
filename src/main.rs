@@ -13,7 +13,7 @@ use tokio::net::UdpSocket;
 use tokio::timer::Timeout;
 
 fn syntax() -> io::Error {
-    println!(
+    eprintln!(
         "Syntax: {} <host:port>",
         env::args().nth(0).unwrap()
     );
@@ -44,49 +44,29 @@ async fn main() -> Result<(), io::Error> {
             println!("{}", addr.ip());
             Ok(())
         }
-        Err(ioerr) => {
-            println!("FAILED WITH: {:?}", ioerr);
-            Err(ioerr)
-        }
+        Err(ioerr) => Err(ioerr)
     }
 }
 
 /// Runs the client: Sends a request and prints the response
 async fn run_client(conn: &mut UdpSocket, dest: &SocketAddr) -> Result<SocketAddr, io::Error> {
-    // TODO optional mult requests across hosts, joined with:
-    // https://rust-lang.github.io/async-book/06_multiple_futures/02_join.html
-
-    // TODO 7 retries with backoff https://tools.ietf.org/html/rfc5389#section-7.2.1
-
     // Build and send request
     let mut transaction_id_buf = [0u8; 12];
     rand::thread_rng().try_fill(&mut transaction_id_buf)?;
     let transaction_id = TransactionId::new(transaction_id_buf);
     let message = Message::<rfc5389::Attribute>::new(MessageClass::Request, rfc5389::methods::BINDING, transaction_id);
     let message_bytes = MessageEncoder::new().encode_into_bytes(message).map_err(std_err_codec)?;
-    // Shouldn't time out but just in case...
-    let _sendsize = Timeout::new(conn.send_to(&message_bytes, &dest), Duration::from_millis(1000)).await?;
 
     // Wait for response, use arbitrarily large buf that shouldn't realistically be exceeded by UDP
     let mut recvbuf = [0u8; 2048];
 
-    println!("Waiting for response from {:?}...", dest);
-    let (recvsize, recvdest) = conn.recv_from(&mut recvbuf).await?; // TODO timeout
-    println!("Got {:?} bytes from {:?}", recvsize, recvdest);
-
-    // Check that the response is from who we're waiting for
-    if *dest != recvdest {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("Response origin {:?} doesn't match request target {:?}", recvdest, dest)
-        ));
-    }
+    let recvsize = recv_exponential_backoff(conn, &dest, &message_bytes, &mut recvbuf).await?;
 
     let mut decoder = MessageDecoder::<rfc5389::Attribute>::new();
     let decoded = decoder.decode_from_bytes(&recvbuf[..recvsize])
         .map_err(std_err_codec)?
         .map_err(std_err_msg)?;
-    println!("Received: {:?}", decoded);
+    eprintln!("Received: {:?}", decoded);
 
     // Check that the returned transaction ID matches what we sent
     if transaction_id != decoded.transaction_id() {
@@ -119,6 +99,32 @@ async fn run_client(conn: &mut UdpSocket, dest: &SocketAddr) -> Result<SocketAdd
             ))
         }
     }
+}
+
+async fn recv_exponential_backoff(conn: &mut UdpSocket, dest: &SocketAddr, sendbuf: &Vec<u8>, mut recvbuf: &mut [u8]) -> Result<usize, io::Error> {
+    // Receive timeout durations: 1s, 2s, 4s, 8s (total wait: 15s)
+    for timeout_exponent in 0..4 {
+        // (Re)send request. Shouldn't time out but just in case...
+        let _sendsize = Timeout::new(conn.send_to(sendbuf, dest), Duration::from_millis(1000)).await?;
+
+        let timeout_ms = 1000 * 2_u64.pow(timeout_exponent);
+        match Timeout::new(conn.recv_from(&mut recvbuf), Duration::from_millis(timeout_ms)).await {
+            // Got a response from somewhere
+            Ok(Ok((recvsize, recvdest))) => {
+                // Before returning, check that the response is from who we're waiting for
+                if *dest == recvdest {
+                    return Ok(recvsize);
+                }
+                // If it doesn't match, resend and resume waiting, unless this was the last retry
+                eprintln!("Response origin {:?} doesn't match request target {:?}", recvdest, dest);
+            },
+            // A different error occurred, give up
+            Ok(Err(e)) => return Err(e),
+            // Timeout occurred, try again (or exit loop)
+            Err(_) => eprintln!("Timed out after {}ms, trying again...", timeout_ms),
+        }
+    }
+    Err(io::Error::new(io::ErrorKind::TimedOut, format!("Timed out on response from {:?}", dest)))
 }
 
 // Clean up after the library author's decision to obnoxiously reinvent the wheel with their own error types.
