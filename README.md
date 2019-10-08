@@ -2,7 +2,7 @@
 
 Prints your public IP address to stdout by querying a specified [STUN](https://tools.ietf.org/html/rfc5389) server.
 
-Useful for finding the public IP when behind a NAT or firewall. Uses an open standard that's faster and arguably safer than querying some rando "what is my ip" website.
+Useful for finding your public IP when behind a NAT or firewall. Uses an open standard that's faster and arguably safer than querying some rando's "what is my ip" website.
 
 ## Quickstart
 
@@ -13,6 +13,8 @@ $ cargo build --release
 $ ./target/release/iplookup stun.l.google.com:19302
 123.456.789.123
 ```
+
+Note: Building `iplookup` requires Rust 1.39.0 or later. This version is currently in beta and is [scheduled](https://blog.rust-lang.org/2019/09/30/Async-await-hits-beta.html) for general release on November 7th 2019.
 
 ## Features
 
