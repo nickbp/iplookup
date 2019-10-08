@@ -5,7 +5,7 @@ authors = ["Nick Parker <nick@nickbp.com>"]
 license = "GPL-3.0+"
 edition = "2018"
 readme = "README-CRATES.md"
-description = "Queries STUN servers for your public IP"
+description = "Queries a STUN server for your public IP"
 repository = "https://github.com/nickbp/iplookup"
 
 [dependencies]
@@ -13,6 +13,3 @@ bytecodec = "0.4"
 rand = "0.7"
 stun_codec = "0.1.12"
 tokio = "=0.2.0-alpha.6"
-
-[dev-dependencies]
-proptest = "0.9.4"
