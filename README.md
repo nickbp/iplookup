@@ -2,7 +2,7 @@
 
 Prints your public IP address to stdout by querying a specified [STUN](https://tools.ietf.org/html/rfc5389) server.
 
-Useful when running something behind a NAT or firewall, while using a method that's faster and arguably safer than querying some rando "what is my ip" website.
+Useful for finding the public IP when behind a NAT or firewall. Uses an open standard that's faster and arguably safer than querying some rando "what is my ip" website.
 
 ## Quickstart
 
