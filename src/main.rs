@@ -8,38 +8,41 @@ use std::net::{SocketAddr, ToSocketAddrs};
 use std::result::Result;
 use std::time::Duration;
 use stun_codec::{BrokenMessage, Message, MessageClass, MessageDecoder, MessageEncoder, TransactionId};
-use stun_codec::rfc5389;
+use stun_codec::rfc5389::{methods, Attribute};
 use tokio::net::UdpSocket;
 use tokio::timer::Timeout;
 
-fn syntax() -> io::Error {
+fn print_syntax() {
     eprintln!(
-        "Syntax: {} <host:port>",
+        "Syntax: {} <host:port>\nEnv: DEBUG: enabled with any non-empty value",
         env::args().nth(0).unwrap()
     );
-    io::Error::new(io::ErrorKind::InvalidInput, "Missing required argument")
 }
 
 #[tokio::main]
 async fn main() -> Result<(), io::Error> {
     if env::args().len() <= 1 {
-        return Err(syntax());
+        print_syntax();
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "Missing required argument"));
     }
     let endpoint = env::args().nth(1).unwrap();
     if endpoint.starts_with('-') {
         // Probably a commandline argument like '-h'/'--help', avoid parsing as a hostname
-        return Err(syntax());
+        print_syntax();
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "Unrecognized argument"));
     }
     // Probably an endpoint, try to resolve it in case it's a hostname
-    let addr = endpoint
-        .to_socket_addrs()
-        .expect(format!("Invalid UDP endpoint '{}'", endpoint).as_str())
-        .next()
-        .unwrap();
+    let addr = resolve(endpoint)?;
     let local_addr = "0.0.0.0:0".to_socket_addrs()?.next().unwrap();
     let mut conn = UdpSocket::bind(local_addr).await?;
 
-    match run_client(&mut conn, &addr).await {
+    // If the "DEBUG" envvar is non-empty, enable debug
+    let debug = match env::var_os("DEBUG") {
+        Some(val) => !val.is_empty(),
+        None => false
+    };
+
+    match run_client(&mut conn, &addr, debug).await {
         Ok(addr) => {
             println!("{}", addr.ip());
             Ok(())
@@ -48,13 +51,26 @@ async fn main() -> Result<(), io::Error> {
     }
 }
 
+fn resolve(endpoint: String) -> Result<SocketAddr, io::Error> {
+    match endpoint.to_socket_addrs() {
+        Ok(mut addrs) => Ok(addrs.next().expect("Missing addresses from OK response")),
+        Err(_err) => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("Invalid or unresolvable UDP endpoint: {}", endpoint)
+        ))
+    }
+}
+
 /// Runs the client: Sends a request and prints the response
-async fn run_client(conn: &mut UdpSocket, dest: &SocketAddr) -> Result<SocketAddr, io::Error> {
+async fn run_client(conn: &mut UdpSocket, dest: &SocketAddr, debug: bool) -> Result<SocketAddr, io::Error> {
     // Build and send request
     let mut transaction_id_buf = [0u8; 12];
     rand::thread_rng().try_fill(&mut transaction_id_buf)?;
     let transaction_id = TransactionId::new(transaction_id_buf);
-    let message = Message::<rfc5389::Attribute>::new(MessageClass::Request, rfc5389::methods::BINDING, transaction_id);
+    let message = Message::<Attribute>::new(MessageClass::Request, methods::BINDING, transaction_id);
+    if debug {
+        eprintln!("Sending: {:?}", &message);
+    }
     let message_bytes = MessageEncoder::new().encode_into_bytes(message).map_err(std_err_codec)?;
 
     // Wait for response, use arbitrarily large buf that shouldn't realistically be exceeded by UDP
@@ -62,11 +78,13 @@ async fn run_client(conn: &mut UdpSocket, dest: &SocketAddr) -> Result<SocketAdd
 
     let recvsize = recv_exponential_backoff(conn, &dest, &message_bytes, &mut recvbuf).await?;
 
-    let mut decoder = MessageDecoder::<rfc5389::Attribute>::new();
+    let mut decoder = MessageDecoder::<Attribute>::new();
     let decoded = decoder.decode_from_bytes(&recvbuf[..recvsize])
         .map_err(std_err_codec)?
         .map_err(std_err_msg)?;
-    eprintln!("Received: {:?}", decoded);
+    if debug {
+        eprintln!("Received ({}b): {:?}", recvsize, decoded);
+    }
 
     // Check that the returned transaction ID matches what we sent
     if transaction_id != decoded.transaction_id() {
@@ -77,11 +95,11 @@ async fn run_client(conn: &mut UdpSocket, dest: &SocketAddr) -> Result<SocketAdd
     }
 
     let result = decoded.attributes().filter_map(|a| {
-        if let rfc5389::Attribute::MappedAddress(ma) = a {
+        if let Attribute::MappedAddress(ma) = a {
             Some(ma.address())
-        } else if let rfc5389::Attribute::XorMappedAddress(ma) = a {
+        } else if let Attribute::XorMappedAddress(ma) = a {
             Some(ma.address())
-        } else if let rfc5389::Attribute::XorMappedAddress2(ma) = a {
+        } else if let Attribute::XorMappedAddress2(ma) = a {
             Some(ma.address())
         } else {
             None
@@ -102,8 +120,9 @@ async fn run_client(conn: &mut UdpSocket, dest: &SocketAddr) -> Result<SocketAdd
 }
 
 async fn recv_exponential_backoff(conn: &mut UdpSocket, dest: &SocketAddr, sendbuf: &Vec<u8>, mut recvbuf: &mut [u8]) -> Result<usize, io::Error> {
-    // Receive timeout durations: 1s, 2s, 4s, 8s (total wait: 15s)
-    for timeout_exponent in 0..4 {
+    // Receive timeout durations: 1s, 2s, 4s, 8s, 16s (total wait: 31s)
+    const RETRIES: u32 = 5;
+    for timeout_exponent in 0..RETRIES {
         // (Re)send request. Shouldn't time out but just in case...
         let _sendsize = Timeout::new(conn.send_to(sendbuf, dest), Duration::from_millis(1000)).await?;
 
@@ -121,10 +140,16 @@ async fn recv_exponential_backoff(conn: &mut UdpSocket, dest: &SocketAddr, sendb
             // A different error occurred, give up
             Ok(Err(e)) => return Err(e),
             // Timeout occurred, try again (or exit loop)
-            Err(_) => eprintln!("Timed out after {}ms, trying again...", timeout_ms),
+            Err(_) => {
+                if timeout_exponent + 1 == RETRIES {
+                    eprintln!("Timed out after {}ms, giving up.", timeout_ms);
+                } else {
+                    eprintln!("Timed out after {}ms, trying {} again...", timeout_ms, dest);
+                }
+            }
         }
     }
-    Err(io::Error::new(io::ErrorKind::TimedOut, format!("Timed out on response from {:?}", dest)))
+    Err(io::Error::new(io::ErrorKind::TimedOut, format!("Timed out waiting for response from {:?}", dest)))
 }
 
 // Clean up after the library author's decision to obnoxiously reinvent the wheel with their own error types.
