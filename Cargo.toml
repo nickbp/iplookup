@@ -12,4 +12,4 @@ repository = "https://github.com/nickbp/iplookup"
 bytecodec = "0.4"
 rand = "0.7"
 stun_codec = "0.1.12"
-tokio = { version = "0.2.5", features = ["macros", "time", "udp"] }
+tokio = { version = "0.2.6", features = ["macros", "time", "udp"] }
