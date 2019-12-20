@@ -14,7 +14,7 @@ $ ./target/release/iplookup stun.l.google.com:19302
 123.456.789.123
 ```
 
-Note: Building `iplookup` requires Rust 1.39.0 or later. This version is currently in beta and is [scheduled](https://blog.rust-lang.org/2019/09/30/Async-await-hits-beta.html) for general release on November 7th 2019.
+Note: Building `iplookup` requires Rust 1.39.0 or later.
 
 ## Features
 

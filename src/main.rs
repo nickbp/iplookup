@@ -30,7 +30,7 @@ use stun_codec::{
     BrokenMessage, Message, MessageClass, MessageDecoder, MessageEncoder, TransactionId,
 };
 use tokio::net::UdpSocket;
-use tokio::timer::Timeout;
+use tokio::time;
 
 fn print_syntax() {
     eprintln!(
@@ -166,13 +166,15 @@ async fn recv_exponential_backoff(
     const RETRIES: u32 = 5;
     for timeout_exponent in 0..RETRIES {
         // (Re)send request. Shouldn't time out but just in case...
-        let _sendsize =
-            Timeout::new(conn.send_to(sendbuf, dest), Duration::from_millis(1000)).await?;
+        let _sendsize = time::timeout(
+            Duration::from_millis(1000),
+            conn.send_to(sendbuf, dest),
+        ).await?;
 
         let timeout_ms = 1000 * 2_u64.pow(timeout_exponent);
-        match Timeout::new(
-            conn.recv_from(&mut recvbuf),
+        match time::timeout(
             Duration::from_millis(timeout_ms),
+            conn.recv_from(&mut recvbuf),
         )
         .await
         {
