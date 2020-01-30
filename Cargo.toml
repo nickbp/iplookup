@@ -1,6 +1,6 @@
 [package]
 name = "iplookup"
-version = "0.0.1"
+version = "0.0.2"
 authors = ["Nick Parker <nick@nickbp.com>"]
 license = "GPL-3.0+"
 edition = "2018"
