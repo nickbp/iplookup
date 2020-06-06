@@ -1,6 +1,6 @@
 [package]
 name = "iplookup"
-version = "0.0.2"
+version = "0.0.3"
 authors = ["Nick Parker <nick@nickbp.com>"]
 license = "GPL-3.0+"
 edition = "2018"
@@ -9,6 +9,7 @@ description = "Queries a STUN server for your public IP"
 repository = "https://github.com/nickbp/iplookup"
 
 [dependencies]
+anyhow = "1.0"
 bytecodec = "0.4"
 rand = "0.7"
 stun_codec = "0.1"
