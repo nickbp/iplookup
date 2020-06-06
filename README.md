@@ -7,6 +7,14 @@ Useful for finding your public IP when behind a NAT or firewall. Uses an open st
 ## Quickstart
 
 ```
+$ cargo install iplookup
+$ iplookup stun.l.google.com:19302
+123.456.789.123
+```
+
+## Build
+
+```
 $ git clone git@github.com:nickbp/iplookup
 $ cd iplookup
 $ cargo build --release
