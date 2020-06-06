@@ -150,7 +150,10 @@ async fn recv_exponential_backoff(
         .await
         {
             // Got a response from somewhere
-            Ok(Ok((recvsize, recvdest))) => {
+            Ok(recv) => {
+                let (recvsize, recvdest) = recv
+                    // A different error occurred, give up
+                    .with_context(|| format!("Failed to receive STUN response from {}", dest))?;
                 // Before returning, check that the response is from who we're waiting for
                 if *dest == recvdest {
                     return Ok(recvsize);
@@ -160,9 +163,7 @@ async fn recv_exponential_backoff(
                     "Response origin {:?} doesn't match request target {:?}",
                     recvdest, dest
                 );
-            }
-            // A different error occurred, give up
-            Ok(Err(e)) => Err(e).context("Failed to receive STUN response")?,
+            },
             // Timeout occurred, try again (or exit loop)
             Err(_) => {
                 if timeout_exponent + 1 == RETRIES {
