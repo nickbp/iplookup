@@ -13,4 +13,3 @@ anyhow = "1.0"
 bytecodec = "0.4"
 rand = "0.7"
 stun_codec = "0.1"
-tokio = { version = "0.2", features = ["macros", "rt-core", "time", "udp"] }

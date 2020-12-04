@@ -1,4 +1,4 @@
-#![deny(warnings, rust_2018_idioms)]
+#![deny(warnings)]
 
 /*
     iplookup - Query STUN service for current public IP address
@@ -22,12 +22,11 @@ use anyhow::{anyhow, bail, Context, Result};
 use bytecodec::{DecodeExt, EncodeExt};
 use rand::Rng;
 use std::env;
-use std::net::{SocketAddr, ToSocketAddrs};
+use std::io::ErrorKind;
+use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 use std::time::Duration;
 use stun_codec::rfc5389::{methods, Attribute};
 use stun_codec::{Message, MessageClass, MessageDecoder, MessageEncoder, TransactionId};
-use tokio::net::UdpSocket;
-use tokio::time;
 
 fn print_syntax() {
     eprintln!(
@@ -36,8 +35,7 @@ fn print_syntax() {
     );
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     if env::args().len() <= 1 {
         print_syntax();
         bail!("Missing required argument");
@@ -55,7 +53,7 @@ async fn main() -> Result<()> {
         .next()
         .with_context(|| format!("Missing addresses in endpoint resolution: {}", endpoint))?;
     let local_addr = "0.0.0.0:0".to_socket_addrs()?.next().unwrap();
-    let mut conn = UdpSocket::bind(local_addr).await?;
+    let mut conn = UdpSocket::bind(local_addr)?;
 
     // If the "DEBUG" envvar is non-empty, enable debug
     let debug = match env::var_os("DEBUG") {
@@ -63,7 +61,7 @@ async fn main() -> Result<()> {
         None => false,
     };
 
-    match run_client(&mut conn, &addr, debug).await {
+    match run_client(&mut conn, &addr, debug) {
         Ok(addr) => {
             println!("{}", addr.ip());
             Ok(())
@@ -73,7 +71,7 @@ async fn main() -> Result<()> {
 }
 
 /// Runs the client: Sends a request and prints the response
-async fn run_client(conn: &mut UdpSocket, dest: &SocketAddr, debug: bool) -> Result<SocketAddr> {
+fn run_client(conn: &mut UdpSocket, dest: &SocketAddr, debug: bool) -> Result<SocketAddr> {
     // Build and send request
     let mut transaction_id_buf = [0u8; 12];
     rand::thread_rng().try_fill(&mut transaction_id_buf)?;
@@ -90,7 +88,7 @@ async fn run_client(conn: &mut UdpSocket, dest: &SocketAddr, debug: bool) -> Res
     // Wait for response, use arbitrarily large buf that shouldn't realistically be exceeded by UDP
     let mut recvbuf = [0u8; 2048];
 
-    let recvsize = recv_exponential_backoff(conn, &dest, &message_bytes, &mut recvbuf).await?;
+    let recvsize = recv_exponential_backoff(conn, &dest, &message_bytes, &mut recvbuf)?;
 
     let mut decoder = MessageDecoder::<Attribute>::new();
     let decoded = decoder
@@ -129,31 +127,24 @@ async fn run_client(conn: &mut UdpSocket, dest: &SocketAddr, debug: bool) -> Res
     result.with_context(|| format!("No address attribute found in response: {:?}", decoded))
 }
 
-async fn recv_exponential_backoff(
+fn recv_exponential_backoff(
     conn: &mut UdpSocket,
     dest: &SocketAddr,
     sendbuf: &Vec<u8>,
     mut recvbuf: &mut [u8],
 ) -> Result<usize> {
+    // UDP sends shouldn't time out but just in case...
+    conn.set_write_timeout(Some(Duration::from_millis(1000)))?;
     // Receive timeout durations: 1s, 2s, 4s, 8s, 16s (total wait: 31s)
     const RETRIES: u32 = 5;
     for timeout_exponent in 0..RETRIES {
-        // (Re)send request. Shouldn't time out but just in case...
-        let _sendsize =
-            time::timeout(Duration::from_millis(1000), conn.send_to(sendbuf, dest)).await?;
+        // (Re)send request.
+        let _sendsize = conn.send_to(sendbuf, dest)?;
 
         let timeout_ms = 1000 * 2_u64.pow(timeout_exponent);
-        match time::timeout(
-            Duration::from_millis(timeout_ms),
-            conn.recv_from(&mut recvbuf),
-        )
-        .await
-        {
-            // Got a response from somewhere
-            Ok(recv) => {
-                let (recvsize, recvdest) = recv
-                    // A different error occurred, give up
-                    .with_context(|| format!("Failed to receive STUN response from {}", dest))?;
+        conn.set_read_timeout(Some(Duration::from_millis(timeout_ms)))?;
+        match conn.recv_from(&mut recvbuf) {
+            Ok((recvsize, recvdest)) => {
                 // Before returning, check that the response is from who we're waiting for
                 if *dest == recvdest {
                     return Ok(recvsize);
@@ -163,13 +154,23 @@ async fn recv_exponential_backoff(
                     "Response origin {:?} doesn't match request target {:?}",
                     recvdest, dest
                 );
-            },
-            // Timeout occurred, try again (or exit loop)
-            Err(_) => {
-                if timeout_exponent + 1 == RETRIES {
-                    eprintln!("Timed out after {}ms, giving up.", timeout_ms);
-                } else {
-                    eprintln!("Timed out after {}ms, trying {} again...", timeout_ms, dest);
+            }
+            Err(e) => {
+                match e.kind() {
+                    ErrorKind::WouldBlock | ErrorKind::TimedOut => {
+                        // Timeout occurred, try again (or exit loop)
+                        if timeout_exponent + 1 == RETRIES {
+                            eprintln!("Timed out after {}ms, giving up.", timeout_ms);
+                        } else {
+                            eprintln!("Timed out after {}ms, trying {} again...", timeout_ms, dest);
+                        }
+                    }
+                    _ => {
+                        // A different error occurred, give up
+                        return Err(e).with_context(|| {
+                            format!("Failed to receive STUN response from {}", dest)
+                        })?;
+                    }
                 }
             }
         }
