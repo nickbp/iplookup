@@ -11,5 +11,5 @@ repository = "https://github.com/nickbp/iplookup"
 [dependencies]
 anyhow = "1.0"
 bytecodec = "0.4"
-rand = "0.7"
+rand = "0.8"
 stun_codec = "0.1"
