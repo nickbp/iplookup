@@ -9,7 +9,7 @@ cd $SCRIPT_DIR
 PROJ_NAME=$(basename $SCRIPT_DIR)
 
 DOCKER_REGISTRY=${DOCKER_REGISTRY:=registry.gitlab.com}
-DOCKER_REPOSITORY=${DOCKER_REPOSITORY:="nickbp/rpi/${PROJ_NAME}:"}
+DOCKER_REPOSITORY=${DOCKER_REPOSITORY:="nickbp/k8s/${PROJ_NAME}:"}
 DOCKER_BUILD=${DOCKER_BUILD:="sudo img build --platform linux/amd64,linux/arm64"}
 
 # Get 7-character commit SHA (note: doesn't detect dirty commits)
