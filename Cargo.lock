@@ -14,9 +14,9 @@ checksum = "39092a32794787acd8525ee150305ff051b0aa6cc2abaf193924f5ab05425f39"
 
 [[package]]
 name = "bytecodec"
-version = "0.4.13"
+version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b16ea882cfbd9aa6e8f999fed22662f4c8c0853d1d231edec276e0e1f5a802e7"
+checksum = "9e02c3c3e576edc89c75de646b616b11a5d8eae83854f416899d1377cb62617d"
 dependencies = [
  "byteorder",
  "trackable",
