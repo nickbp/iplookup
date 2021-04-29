@@ -1,3 +1,7 @@
+# [THIS PROJECT HAS MOVED TO SOURCEHUT!](https://sr.ht/~nickbp/iplookup/)
+
+I'm consolidating my personal projects in one place. As such the old GitHub repo is being archived, and work now continues on sourcehut.
+
 # iplookup
 
 Prints your public IP address to stdout by querying a specified [STUN](https://tools.ietf.org/html/rfc5389) server.
